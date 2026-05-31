@@ -1,0 +1,339 @@
+\documentclass[twocolumn, 10pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[spanish]{babel}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{graphicx}
+
+\geometry{
+  top=1.8cm, bottom=1.8cm,
+  left=1.5cm, right=1.5cm,
+  columnsep=0.6cm
+}
+
+\definecolor{codebg}{rgb}{0.95,0.95,0.95}
+\definecolor{codekey}{rgb}{0.0,0.35,0.65}
+\definecolor{codecomment}{rgb}{0.3,0.5,0.3}
+
+\lstset{
+  backgroundcolor=\color{codebg},
+  basicstyle=\ttfamily\fontsize{7}{8.5}\selectfont,
+  keywordstyle=\color{codekey}\bfseries,
+  commentstyle=\color{codecomment}\itshape,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!40},
+  xleftmargin=4pt, xrightmargin=4pt,
+  aboveskip=4pt, belowskip=4pt
+}
+
+\newtheorem{theorem}{Teorema}
+
+\title{\textbf{Exponenciación Modular Rápida:\\
+De $O(n)$ a $O(\log n)$ y su Rol en la Criptografía RSA}\\[4pt]
+\small UNIVALLE BUGA -- Análisis y Diseño de Algoritmos -- 2026}
+
+\author{Jhon Alejandro Ortega Valdes\\ Julian Andres Martinez Torres}
+\date{}
+
+\begin{document}
+\maketitle
+
+%% ─────────────────────────────────────────
+\section*{Resumen}
+%% ─────────────────────────────────────────
+
+Calcular $a^n \bmod m$ para valores enormes de $n$ es la operación central
+de la criptografía RSA, donde los exponentes superan los 2048 dígitos
+binarios. El método directo ---multiplicar $n$ veces--- tiene un costo
+$O(n)$, es decir, el tiempo crece al mismo ritmo que el exponente, lo cual
+lo vuelve completamente inviable para esas magnitudes. La técnica de
+\emph{exponenciación por cuadrados sucesivos}, formalizada por D.\ Knuth
+(1969) y basada en ideas de Gauss (1801), reduce ese costo a $O(\log n)$:
+el tiempo crece muchísimo más despacio que el exponente, convirtiendo una
+operación imposible en algo que tarda microsegundos. Este documento
+demuestra esa reducción, muestra implementaciones en Python, y la
+valida con mediciones reales de tiempo.
+
+%% ─────────────────────────────────────────
+\section{Introducción}
+%% ─────────────────────────────────────────
+
+\textbf{¿Qué significa calcular $a^n \bmod m$?} El operador
+\textbf{módulo} ($\bmod$) entrega el \emph{resto} de una división. Por
+ejemplo:
+\[
+  17 \bmod 5 = 2 \quad \text{(porque } 17 = 3 \times 5 + 2\text{)}
+\]
+
+La \textbf{exponenciación modular} es entonces elevar $a$ a la potencia
+$n$ y quedarse con el resto al dividir entre $m$:
+\[
+  r = a^n \bmod m
+\]
+
+\textbf{Ejemplo.} Un reloj de 12 horas aplica el módulo de forma
+continua sin que el usuario lo note. Si en un momento dado el reloj
+marca las 10~h y transcurren 5 horas más, el resultado no es 15~h
+sino $15 \bmod 12 = 3$~h: el reloj ``reinicia'' al llegar a 12 y
+continúa desde cero. Lo mismo ocurre si se suman 29 horas a las 10~h:
+$39 \bmod 12 = 3$~h, exactamente el mismo resultado que sumar solo 3.
+Esta propiedad ---que valores muy distintos pueden producir el mismo
+resto--- es precisamente lo que hace útil el módulo en criptografía,
+pues permite ocultar información dentro de operaciones que son fáciles
+de calcular en una dirección pero muy difíciles de revertir. RSA
+aprovecha ese mismo principio, pero con módulos del orden de
+$10^{600}$ en lugar de 12.
+
+En el cifrado RSA, proteger un mensaje $M$ se hace calculando
+$c = M^e \bmod n$, y recuperarlo requiere $M = c^d \bmod n$, donde $d$
+puede ser del orden de $2^{2048}$. Ejecutar $2^{2048}$
+multiplicaciones convencionales tomaría aproximadamente $10^{597}$ años
+incluso con los computadores más rápidos del mundo. La exponenciación por
+cuadrados sucesivos resuelve esto con apenas $2048$ multiplicaciones.
+
+%% ─────────────────────────────────────────
+\section{Análisis de Complejidad}
+%% ─────────────────────────────────────────
+
+\subsection{Método directo: \texorpdfstring{$O(n)$}{O(n)}}
+
+La idea más simple es multiplicar $a$ por sí mismo, una y otra vez,
+exactamente $n$ veces:
+
+\[
+  a^n = \underbrace{a \cdot a \cdot \ldots \cdot a}_{n \text{ veces}}
+\]
+
+\textbf{Ejemplo.} Un repartidor que debe entregar un paquete en el
+décimo piso de un edificio sin ascensor sube los escalones de uno en
+uno: cada escalón es un paso obligatorio y no puede saltarse ninguno.
+Si el edificio tuviera 1000 pisos, daría 1000 pasos; si tuviera
+$10^{616}$ pisos, el tiempo de subida sería incompatible con cualquier
+expectativa de vida. El método directo de exponenciación funciona igual:
+por cada unidad que crece el exponente $n$, el programa debe ejecutar
+una multiplicación adicional. El costo es estrictamente proporcional
+al tamaño del problema.
+
+\begin{algorithm}[H]
+\caption{Exponenciación directa (lenta)}
+\begin{algorithmic}[1]
+\Function{PotenciaDirect}{$a, n, m$}
+  \State $r \gets 1$
+  \For{$i = 1$ \textbf{hasta} $n$}
+    \State $r \gets (r \cdot a) \bmod m$  \Comment{una multiplicación por paso}
+  \EndFor
+  \State \Return $r$
+\EndFunction
+\end{algorithmic}
+\end{algorithm}
+
+\textbf{Costo:} $n$ multiplicaciones $\Rightarrow T(n) = O(n)$. El tiempo
+crece en proporción directa al exponente.
+
+\subsection{Método rápido: \texorpdfstring{$O(\log n)$}{O(log n)}}
+
+La clave está en una observación sencilla: en lugar de multiplicar
+paso a paso, podemos \emph{doblar} el resultado en cada ronda.
+
+\textbf{Ejemplo.} Una hoja de papel tiene un grosor de aproximadamente
+0{,}1~mm. Al doblarla una vez, el grosor se duplica: 0{,}2~mm. Al
+doblarla dos veces, 0{,}4~mm. Tras 10 dobleces se obtiene un grosor de
+$2^{10} \times 0{,}1 = 102{,}4$~mm, es decir, más de 10~cm. Con el
+método directo, para alcanzar esas 1024 capas habría que apilar 1024
+hojas una por una: 1024 operaciones. Con el método de los dobleces,
+solo se necesitan 10 operaciones para llegar al mismo resultado. Ese
+es exactamente el principio de la exponenciación por cuadrados
+sucesivos: en lugar de acumular de a uno, se dobla el resultado en
+cada paso, reduciendo drásticamente la cantidad de operaciones
+necesarias.
+
+La idea se basa en la siguiente propiedad:
+\[
+  a^n =
+  \begin{cases}
+    1 & \text{si } n = 0 \\
+    \left(a^{n/2}\right)^2 & \text{si } n \text{ es par} \\
+    a \cdot a^{n-1} & \text{si } n \text{ es impar}
+  \end{cases}
+\]
+
+\textbf{Ejemplo concreto.} Para calcular $3^{13}$:
+\begin{itemize}
+  \item $13$ es impar: $3^{13} = 3 \cdot 3^{12}$
+  \item $12$ es par: $3^{12} = (3^6)^2$
+  \item $6$ es par: $3^{6} = (3^3)^2$
+  \item $3$ es impar: $3^{3} = 3 \cdot 3^{2}$
+  \item $3^2 = 9$, luego $3^3=27$, $3^6=729$, $3^{12}=531441$, $3^{13}=1594323$
+\end{itemize}
+Solo se necesitaron \textbf{5 multiplicaciones} en lugar de 12.
+
+\begin{algorithm}[H]
+\caption{Exponenciación por cuadrados sucesivos (rápida)}
+\begin{algorithmic}[1]
+\Function{PotenciaRapida}{$a, n, m$}
+  \State $r \gets 1$
+  \State $a \gets a \bmod m$
+  \While{$n > 0$}
+    \If{$n$ es impar}
+      \State $r \gets (r \cdot a) \bmod m$
+    \EndIf
+    \State $n \gets \lfloor n/2 \rfloor$  \Comment{reducir a la mitad}
+    \State $a \gets (a \cdot a) \bmod m$  \Comment{cuadrar la base}
+  \EndWhile
+  \State \Return $r$
+\EndFunction
+\end{algorithmic}
+\end{algorithm}
+
+\subsubsection{Demostración del costo}
+
+\begin{theorem}
+\textsc{PotenciaRapida} realiza a lo sumo $2\lfloor \log_2 n \rfloor + 2$
+multiplicaciones, por lo que su costo es $T(n) = O(\log n)$.
+\end{theorem}
+
+\begin{proof}
+El ciclo \textbf{mientras} repite su cuerpo mientras $n > 0$. En cada
+vuelta, $n$ se divide entre 2. La cantidad de veces que se puede dividir
+$n$ entre 2 antes de llegar a 0 es exactamente:
+\[
+  k = \lfloor \log_2 n \rfloor + 1
+\]
+En cada vuelta se hace \emph{siempre} 1 cuadrado, y \emph{a lo sumo}
+1 multiplicación extra cuando $n$ es impar. Por eso:
+\[
+  \text{total de multiplicaciones} \leq 2k = 2(\lfloor \log_2 n \rfloor + 1)
+\]
+Como $\lfloor \log_2 n \rfloor < \log_2 n$, el costo es $T(n) = O(\log n)$.
+\qed
+\end{proof}
+
+\subsection{Comparación de operaciones}
+
+\begin{table}[H]
+\centering
+\caption{Multiplicaciones necesarias según el método}
+\small
+\begin{tabular}{@{}lcc@{}}
+\toprule
+Exponente $n$ & Directo $O(n)$ & Rápido $O(\log n)$ \\
+\midrule
+$10^3$     & 1.000             & 10 \\
+$10^6$     & 1.000.000         & 20 \\
+$10^{12}$  & $10^{12}$         & 40 \\
+$2^{2048}$ & $\approx 10^{616}$ & 2.048 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+La diferencia ya no es solo de velocidad: es la diferencia entre
+lo que es posible y lo que no lo es.
+
+%% ─────────────────────────────────────────
+\section{Aplicaciones Reales}
+%% ─────────────────────────────────────────
+
+\subsection{Cifrado RSA}
+
+RSA (Rivest, Shamir, Adleman, 1977) es el sistema de cifrado asimétrico
+más utilizado en el mundo. Se basa en que multiplicar dos números primos
+grandes es fácil, pero factorizarlos (encontrar de cuál multiplicación
+surgieron) es extremadamente difícil. Sus pasos son:
+
+\begin{enumerate}
+  \item Elegir dos números primos grandes $p$ y $q$; calcular $n = p \cdot q$.
+  \item Calcular $\varphi(n) = (p-1)(q-1)$, que cuenta cuántos números
+        menores que $n$ no comparten factores con él.
+  \item Elegir $e$ tal que $\text{mcd}(e,\, \varphi(n)) = 1$
+        (el máximo común divisor sea 1, es decir, sean coprimos).
+  \item Hallar $d = e^{-1} \bmod \varphi(n)$ (el inverso modular de $e$).
+  \item \textbf{Cifrar:} $c = M^e \bmod n$ \quad (necesita \textsc{PotenciaRapida})
+  \item \textbf{Descifrar:} $M = c^d \bmod n$ \quad (necesita \textsc{PotenciaRapida})
+\end{enumerate}
+
+\textbf{Ejemplo simplificado.} Con $p=61$, $q=53$, $n=3233$, $e=17$ y
+$d=2753$: el mensaje $M=42$ se cifra como $42^{17} \bmod 3233 = 2557$, y
+se descifra como $2557^{2753} \bmod 3233 = 42$. Ambas operaciones usan
+\textsc{PotenciaRapida} y tardan microsegundos.
+
+Sin $O(\log n)$, protocolos como HTTPS, las contraseñas de correo
+electrónico y las transacciones bancarias en línea serían inviables.
+
+\subsection{Otras aplicaciones}
+
+\textbf{Acuerdo de claves Diffie-Hellman (1976):} Permite que dos personas
+acuerden una clave secreta a través de un canal público, como si hablaran
+en clave delante de todos. Calcula $g^a \bmod p$ con valores de $a$
+mayores a $10^{300}$, por lo que también depende de la exponenciación
+rápida.
+
+\textbf{Prueba de primalidad de Miller-Rabin:} Determina si un número es
+primo de forma eficiente. Se usa para generar las claves de RSA y requiere
+la exponenciación rápida en su núcleo.
+
+\textbf{Criptografía de curva elíptica:} Variante moderna que aplica el
+mismo principio de cuadrados sucesivos sobre puntos geométricos en lugar
+de números enteros. Logra la misma seguridad que RSA-3072 usando claves
+de solo 256 dígitos binarios, por lo que es el estándar en teléfonos
+móviles y dispositivos con recursos limitados.
+
+%% ─────────────────────────────────────────
+\section{Resultados de las Pruebas}
+%% ─────────────────────────────────────────
+
+Se midió el tiempo de ejecución en Python 3 promediando 100 repeticiones
+por valor de $n$, sobre un procesador Intel Core i5 a 3,5~GHz.
+La aceleración indica cuántas veces más rápido es el
+método rápido frente al directo.
+
+\begin{table}[H]
+\centering
+\caption{Tiempo medido en Python 3 (ms), promedio de 100 repeticiones}
+\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+$n$ & Directo (ms) & Rápido (ms) & Aceleración \\
+\midrule
+$10^3$             & 0,118  & 0,00262 & $45\times$ \\
+$5\times10^3$      & 0,400  & 0,00198 & $202\times$ \\
+$10^4$             & 0,797  & 0,00210 & $379\times$ \\
+$5\times10^4$      & 4,131  & 0,00239 & $1.732\times$ \\
+$10^5$             & 8,030  & 0,00293 & $2.742\times$ \\
+$10^6$             & inviable & 0,00350 & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent Las gráficas completas y los archivos de prueba se encuentran
+en el archivo \texttt{comparador\_rsa.py} del repositorio.
+
+%% ─────────────────────────────────────────
+\section{Conclusión}
+%% ─────────────────────────────────────────
+
+La exponenciación por cuadrados sucesivos es un ejemplo perfecto de cómo
+un ingenio matemático sencillo ---en lugar de multiplicar $n$ veces,
+dividir el problema a la mitad en cada paso--- transforma lo imposible en
+trivial. Pasar de $O(n)$ a $O(\log n)$ significa que para $n = 2^{2048}$,
+el número de operaciones baja de $10^{616}$ a apenas 2048: la misma tarea,
+un abismo de diferencia. Cada vez que alguien envía un mensaje cifrado,
+realiza una compra en línea o se conecta a una red segura, este algoritmo
+---cuyas raíces se remontan al trabajo de Gauss en 1801--- opera en
+segundo plano haciendo posible la vida digital moderna.
+
+%% ─────────────────────────────────────────
+\section*{Repositorio}
+%% ─────────────────────────────────────────
+
+\noindent
+Código fuente y pruebas de rendimiento:\\
+\url{https://github.com/Alejandro-Ortega10/Algoritmo-RSA.git}
+
+\end{document}
